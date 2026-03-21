@@ -134,7 +134,7 @@ export default function LeBref() {
       setLoading(true); setError(null);
       try {
         const rows = await supabaseFetch("articles",
-          `published_date=eq.${selectedDate}&select=id,category,subcategory,headline,tldr,summary,why_it_matters,sources,source_urls,time_published&order=created_at.desc`
+          `published_date=eq.${selectedDate}&select=id,category,subcategory,headline,tldr,summary,why_it_matters,sources,source_urls,time_published&order=time_published.desc`
         );
         setArticles(rows);
       } catch (e) { setError("Failed to load articles."); }
