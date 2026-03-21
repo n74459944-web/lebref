@@ -41,7 +41,7 @@ function timeAgo(isoStr) {
   return Math.floor(diff / 1440) + "d ago";
 }
 
-async function sb(table, params) {
+async function sbClient(table, params) {
   var r = await fetch(SB_URL + "/rest/v1/" + table + "?" + (params || ""), {
     headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY }
   });
@@ -51,29 +51,27 @@ async function sb(table, params) {
 
 async function doShare(a, e) {
   e.stopPropagation();
-  var url = window.location.origin + aLink(a);
-  if (navigator.share) {
+  var url = (typeof window !== "undefined" ? window.location.origin : "") + aLink(a);
+  if (typeof navigator !== "undefined" && navigator.share) {
     try { await navigator.share({ title: a.headline, text: a.tldr, url: url }); } catch(x) {}
-  } else {
+  } else if (typeof navigator !== "undefined") {
     await navigator.clipboard.writeText(a.headline + "\n" + a.tldr + "\n\n" + url);
     var b = e.currentTarget, o = b.textContent; b.textContent = "Copied!";
     setTimeout(function() { b.textContent = o; }, 1500);
   }
 }
 
-// Skeleton card component
 function Skeleton() {
   return <div className="lb-sk"><div className="lb-sk-badge" /><div className="lb-sk-line lb-sk-l1" /><div className="lb-sk-line lb-sk-l2" /></div>;
 }
 
-// Inline newsletter component
-function InlineNL({ sbUrl, sbKey }) {
+function InlineNL() {
   var [em, setEm] = useState("");
   var [done, setDone] = useState(false);
   async function sub(e) {
     e.preventDefault();
     if (!em || em.indexOf("@") < 0) return;
-    try { await fetch(sbUrl + "/rest/v1/subscribers", { method: "POST", headers: { apikey: sbKey, Authorization: "Bearer " + sbKey, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ email: em, subscribed_at: new Date().toISOString() }) }); } catch(x) {}
+    try { await fetch(SB_URL + "/rest/v1/subscribers", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ email: em, subscribed_at: new Date().toISOString() }) }); } catch(x) {}
     setDone(true);
   }
   if (done) return <div className="lb-inl"><div className="lb-inl-ok">{"\u2713"} You're in! See you tomorrow.</div></div>;
@@ -88,27 +86,30 @@ function InlineNL({ sbUrl, sbKey }) {
   );
 }
 
-export default function LeBref() {
-  var [articles, setArticles] = useState([]);
-  var [dateCounts, setDateCounts] = useState({});
-  var [dates, setDates] = useState([]);
-  var [selDate, setSelDate] = useState(null);
+export default function LeBref({ initialDates, initialDateCounts, initialArticles, initialError }) {
+  // Use SSG data for initial render
+  var firstDate = initialDates && initialDates.length > 0 ? initialDates[0] : null;
+
+  var [articles, setArticles] = useState(firstDate && initialArticles[firstDate] ? initialArticles[firstDate] : []);
+  var [dateCounts, setDateCounts] = useState(initialDateCounts || {});
+  var [dates, setDates] = useState(initialDates || []);
+  var [selDate, setSelDate] = useState(firstDate);
   var [selCat, setSelCat] = useState("all");
   var [expId, setExpId] = useState(null);
   var [query, setQuery] = useState("");
   var [search, setSearch] = useState(false);
-  var [loading, setLoading] = useState(true);
-  var [err, setErr] = useState(null);
+  var [loading, setLoading] = useState(false); // No loading on first render — data is pre-fetched
+  var [err, setErr] = useState(initialError);
   var [email, setEmail] = useState("");
   var [subbed, setSubbed] = useState(false);
   var [dark, setDark] = useState(false);
   var [showTop, setShowTop] = useState(false);
-  var [lastUpdated, setLastUpdated] = useState(null);
+  var [lastUpdated, setLastUpdated] = useState(articles.length > 0 ? articles[0].created_at : null);
+  var [fetchedDates, setFetchedDates] = useState(firstDate ? { [firstDate]: true } : {});
   var sRef = useRef(null);
 
   function toggleDark() { var n = !dark; setDark(n); try { localStorage.setItem("lb-dark", n ? "1" : "0"); } catch(e) {} }
 
-  // Dark mode init
   useEffect(function() {
     try {
       if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) setDark(true);
@@ -117,7 +118,6 @@ export default function LeBref() {
     } catch(e) {}
   }, []);
 
-  // GA
   useEffect(function() {
     if (!GA_ID) return;
     var s1 = document.createElement("script"); s1.async = true;
@@ -128,49 +128,40 @@ export default function LeBref() {
     document.head.appendChild(s2);
   }, []);
 
-  // Back to top on scroll
   useEffect(function() {
     function onScroll() { setShowTop(window.scrollY > 400); }
     window.addEventListener("scroll", onScroll, { passive: true });
     return function() { window.removeEventListener("scroll", onScroll); };
   }, []);
 
-  // Keyboard shortcuts
   var handleKey = useCallback(function(e) {
     if (search || e.target.tagName === "INPUT") return;
     if (e.key === "Escape" && expId) setExpId(null);
   }, [search, expId]);
   useEffect(function() { window.addEventListener("keydown", handleKey); return function() { window.removeEventListener("keydown", handleKey); }; }, [handleKey]);
 
-  // Load dates with counts
-  useEffect(function() {
-    (async function() {
-      try {
-        var rows = await sb("articles", "select=published_date&order=published_date.desc&limit=500");
-        var counts = {}, seen = {}, u = [];
-        rows.forEach(function(r) {
-          var d = r.published_date;
-          counts[d] = (counts[d] || 0) + 1;
-          if (!seen[d]) { seen[d] = 1; u.push(d); }
-        });
-        u.sort(function(a, b) { return b.localeCompare(a); });
-        u = u.slice(0, 14);
-        setDates(u);
-        setDateCounts(counts);
-        if (u.length) setSelDate(u[0]); else { setLoading(false); setErr("No articles yet."); }
-      } catch(e) { setErr("Could not connect to database."); setLoading(false); }
-    })();
-  }, []);
-
-  // Load articles
+  // Only fetch client-side when user switches to a date we don't have yet
   useEffect(function() {
     if (!selDate) return;
+
+    // Already have this date's articles from SSG or previous fetch
+    if (initialArticles[selDate] && !fetchedDates[selDate]) {
+      setArticles(initialArticles[selDate]);
+      if (initialArticles[selDate].length > 0) setLastUpdated(initialArticles[selDate][0].created_at);
+      setFetchedDates(function(prev) { var n = Object.assign({}, prev); n[selDate] = true; return n; });
+      return;
+    }
+
+    if (fetchedDates[selDate]) return;
+
+    // Fetch from client
     (async function() {
       setLoading(true); setErr(null);
       try {
-        var rows = await sb("articles", "published_date=eq." + selDate + "&select=id,category,subcategory,headline,tldr,summary,why_it_matters,sources,source_urls,time_published,published_date,created_at&order=time_published.desc");
+        var rows = await sbClient("articles", "published_date=eq." + selDate + "&select=id,category,subcategory,headline,tldr,summary,why_it_matters,sources,source_urls,time_published,published_date,created_at&order=time_published.desc");
         setArticles(rows);
         if (rows.length > 0) setLastUpdated(rows[0].created_at);
+        setFetchedDates(function(prev) { var n = Object.assign({}, prev); n[selDate] = true; return n; });
       } catch(e) { setErr("Failed to load."); }
       setLoading(false);
     })();
@@ -178,7 +169,6 @@ export default function LeBref() {
 
   useEffect(function() { if (search && sRef.current) sRef.current.focus(); }, [search]);
 
-  // Filter
   var filtered = articles.filter(function(a) {
     var cm = selCat === "all" || a.category === selCat;
     var q = query.toLowerCase();
@@ -186,12 +176,10 @@ export default function LeBref() {
     return cm && sm;
   });
 
-  // Counts
   var cc = {};
   articles.forEach(function(a) { cc[a.category] = (cc[a.category] || 0) + 1; });
   var hasBrk = cc["breaking"] > 0;
 
-  // Trending: find subcategories that appear 2+ times
   var subCounts = {};
   articles.forEach(function(a) { if (a.subcategory) subCounts[a.subcategory] = (subCounts[a.subcategory] || 0) + 1; });
   var trending = Object.keys(subCounts).filter(function(k) { return subCounts[k] >= 2; }).sort(function(a, b) { return subCounts[b] - subCounts[a]; }).slice(0, 3);
@@ -226,7 +214,16 @@ export default function LeBref() {
         {search && <input ref={sRef} className="lb-si" placeholder="Search highlights..." value={query} onChange={function(e) { setQuery(e.target.value); }} />}
         <div className="lb-ds">
           {dates.slice(0, 7).map(function(d) {
-            return <button key={d} className={"lb-dc" + (selDate === d ? " a" : "")} onClick={function() { setSelDate(d); setExpId(null); setSelCat("all"); }}>
+            return <button key={d} className={"lb-dc" + (selDate === d ? " a" : "")} onClick={function() {
+              setSelDate(d);
+              setExpId(null);
+              setSelCat("all");
+              // Use cached SSG data if available
+              if (initialArticles[d]) {
+                setArticles(initialArticles[d]);
+                if (initialArticles[d].length > 0) setLastUpdated(initialArticles[d][0].created_at);
+              }
+            }}>
               {dateLabel(d)}
               {dateCounts[d] && <span className="lb-dc-n">({dateCounts[d]})</span>}
             </button>;
@@ -297,9 +294,7 @@ export default function LeBref() {
                 </div>
               </div>}
             </div>;
-
-            // Insert inline newsletter after 3rd article
-            if (i === 2 && !subbed) return <>{card}<InlineNL key="inl" sbUrl={SB_URL} sbKey={SB_KEY} /></>;
+            if (i === 2 && !subbed) return <>{card}<InlineNL key="inl" /></>;
             return card;
           })}
         </>)}
