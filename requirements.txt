@@ -1,0 +1,9 @@
+# Daily Digest Backend Dependencies
+# Install with: pip install -r requirements.txt --break-system-packages
+
+feedparser==6.0.11       # Parse RSS feeds from news sources
+anthropic==0.42.0        # Claude API for summarization
+supabase==2.11.0         # Database (free tier = plenty for this)
+python-dotenv==1.0.1     # Load API keys from .env file
+schedule==1.2.2          # Run the job daily on a timer
+requests==2.32.3         # HTTP requests for fetching feeds
