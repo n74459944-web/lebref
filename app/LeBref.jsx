@@ -2,401 +2,230 @@
 
 import { useState, useEffect, useRef } from "react";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-const GA_ID = process.env.NEXT_PUBLIC_GA_ID || "";
+var SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+var SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+var GA_ID = process.env.NEXT_PUBLIC_GA_ID || "";
 
-// ============================================
-// Live Events - add/remove as needed
-// These show as a highlighted category at the front
-// ============================================
-const LIVE_EVENTS = [
-  { id: "iran-war", label: "Iran War", icon: "🔴", color: "#B71C1C", keywords: ["iran", "tehran", "hormuz", "persian gulf"] },
-];
-
-const CATEGORIES = [
-  { id: "all", label: "All", icon: "◉" },
-  { id: "politics", label: "Politics", icon: "🏛", color: "#C62828" },
-  { id: "economics", label: "Economics", icon: "📊", color: "#1565C0" },
-  { id: "technology", label: "Technology", icon: "⚡", color: "#6A1B9A" },
-  { id: "world", label: "World", icon: "🌍", color: "#2E7D32" },
-  { id: "science", label: "Science", icon: "🔬", color: "#E65100" },
-  { id: "health", label: "Health", icon: "🩺", color: "#00838F" },
-  { id: "environment", label: "Climate", icon: "🌱", color: "#558B2F" },
-  { id: "canada", label: "Canada", icon: "🍁", color: "#D32F2F" },
+var CATEGORIES = [
+  { id: "all", label: "All", icon: "\u25C9" },
+  { id: "breaking", label: "Breaking", icon: "\uD83D\uDD34", color: "#B71C1C", isLive: true },
+  { id: "politics", label: "Politics", icon: "\uD83C\uDFDB\uFE0F", color: "#C62828" },
+  { id: "economics", label: "Economics", icon: "\uD83D\uDCCA", color: "#1565C0" },
+  { id: "tech", label: "Tech & Science", icon: "\u26A1", color: "#6A1B9A" },
+  { id: "world", label: "World", icon: "\uD83C\uDF0D", color: "#2E7D32" },
+  { id: "health", label: "Health", icon: "\uD83E\uDE7A", color: "#00838F" },
+  { id: "crime", label: "Crime & Justice", icon: "\u2696\uFE0F", color: "#4E342E" },
 ];
 
 function getCatColor(id) {
-  const live = LIVE_EVENTS.find((e) => e.id === id);
-  if (live) return live.color;
-  return CATEGORIES.find((c) => c.id === id)?.color || "#888";
+  var c = CATEGORIES.find(function(x) { return x.id === id; });
+  return c ? c.color || "#888" : "#888";
 }
 
-function buildClaudeLink(article) {
-  const prompt = `Explain this news story in depth. Cover the background, key players involved, what led to this, what happens next, and how it affects everyday people.\n\nHeadline: ${article.headline}\nSummary: ${article.summary}`;
-  return `https://claude.ai/new?q=${encodeURIComponent(prompt)}`;
+function buildClaudeLink(a) {
+  return "https://claude.ai/new?q=" + encodeURIComponent("Explain this news story in depth. Cover the background, key players involved, what led to this, what happens next, and how it affects everyday people.\n\nHeadline: " + a.headline + "\nSummary: " + a.summary);
 }
 
-function formatDate(dateStr) {
-  const d = new Date(dateStr + "T12:00:00");
-  return d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+function formatDate(ds) {
+  return new Date(ds + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 }
 
-function getDateLabel(dateStr) {
-  const today = new Date(); today.setHours(12, 0, 0, 0);
-  const d = new Date(dateStr + "T12:00:00");
-  const diff = Math.round((today - d) / (1000 * 60 * 60 * 24));
+function getDateLabel(ds) {
+  var today = new Date(); today.setHours(12, 0, 0, 0);
+  var diff = Math.round((today - new Date(ds + "T12:00:00")) / 86400000);
   if (diff === 0) return "Today";
   if (diff === 1) return "Yesterday";
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return new Date(ds + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-async function supabaseFetch(table, params = "") {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, {
-    headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+async function sbFetch(table, params) {
+  var r = await fetch(SUPABASE_URL + "/rest/v1/" + table + "?" + (params || ""), {
+    headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + SUPABASE_ANON_KEY }
   });
-  if (!res.ok) throw new Error(`Supabase error: ${res.status}`);
-  return res.json();
+  if (!r.ok) throw new Error("DB error");
+  return r.json();
 }
 
-function formatSubcategory(sub) {
-  if (!sub) return "";
-  return sub.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
+function fmtSub(s) { return s ? s.replace(/-/g, " ").replace(/\b\w/g, function(c) { return c.toUpperCase(); }) : ""; }
 
-function matchLiveEvent(article) {
-  const text = `${article.headline} ${article.tldr} ${article.summary || ""}`.toLowerCase();
-  for (const event of LIVE_EVENTS) {
-    if (event.keywords.some((kw) => text.includes(kw))) return event.id;
-  }
-  return null;
-}
-
-async function shareArticle(article, e) {
+async function doShare(a, e) {
   e.stopPropagation();
-  const shareData = {
-    title: article.headline,
-    text: article.tldr,
-    url: window.location.href,
-  };
   if (navigator.share) {
-    try { await navigator.share(shareData); } catch (err) { /* cancelled */ }
+    try { await navigator.share({ title: a.headline, text: a.tldr, url: window.location.href }); } catch(x) {}
   } else {
-    await navigator.clipboard.writeText(`${article.headline}\n${article.tldr}\n\nRead more at ${window.location.href}`);
-    const btn = e.currentTarget;
-    const orig = btn.textContent;
-    btn.textContent = "Copied!";
-    setTimeout(() => { btn.textContent = orig; }, 1500);
+    await navigator.clipboard.writeText(a.headline + "\n" + a.tldr + "\n\n" + window.location.href);
+    var b = e.currentTarget, o = b.textContent; b.textContent = "Copied!";
+    setTimeout(function() { b.textContent = o; }, 1500);
   }
 }
 
 export default function LeBref() {
-  const [articles, setArticles] = useState([]);
-  const [availableDates, setAvailableDates] = useState([]);
-  const [selectedDate, setSelectedDate] = useState(null);
-  const [selectedCategory, setSelectedCategory] = useState("all");
-  const [expandedId, setExpandedId] = useState(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [showSearch, setShowSearch] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [email, setEmail] = useState("");
-  const [subscribed, setSubscribed] = useState(false);
-  const searchRef = useRef(null);
+  var [articles, setArticles] = useState([]);
+  var [dates, setDates] = useState([]);
+  var [selDate, setSelDate] = useState(null);
+  var [selCat, setSelCat] = useState("all");
+  var [expId, setExpId] = useState(null);
+  var [query, setQuery] = useState("");
+  var [search, setSearch] = useState(false);
+  var [loading, setLoading] = useState(true);
+  var [err, setErr] = useState(null);
+  var [email, setEmail] = useState("");
+  var [subbed, setSubbed] = useState(false);
+  var sRef = useRef(null);
 
-  useEffect(() => {
+  useEffect(function() {
     if (!GA_ID) return;
-    const s1 = document.createElement("script");
-    s1.async = true;
-    s1.src = `https://www.googletagmanager.com/gtag/js?id=${GA_ID}`;
+    var s1 = document.createElement("script"); s1.async = true;
+    s1.src = "https://www.googletagmanager.com/gtag/js?id=" + GA_ID;
     document.head.appendChild(s1);
-    const s2 = document.createElement("script");
-    s2.textContent = `window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','${GA_ID}');`;
+    var s2 = document.createElement("script");
+    s2.textContent = "window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','" + GA_ID + "');";
     document.head.appendChild(s2);
   }, []);
 
-  useEffect(() => {
-    async function loadDates() {
+  useEffect(function() {
+    (async function() {
       try {
-        const rows = await supabaseFetch("articles", "select=published_date&order=published_date.desc&limit=500");
-        const unique = [...new Set(rows.map((r) => r.published_date))].sort((a, b) => b.localeCompare(a)).slice(0, 14);
-        setAvailableDates(unique);
-        if (unique.length > 0) setSelectedDate(unique[0]);
-        else { setLoading(false); setError("No articles yet."); }
-      } catch (e) { setError("Could not connect to database."); setLoading(false); }
-    }
-    loadDates();
+        var rows = await sbFetch("articles", "select=published_date&order=published_date.desc&limit=500");
+        var seen = {}, u = [];
+        rows.forEach(function(r) { if (!seen[r.published_date]) { seen[r.published_date] = 1; u.push(r.published_date); } });
+        u.sort(function(a, b) { return b.localeCompare(a); });
+        u = u.slice(0, 14);
+        setDates(u);
+        if (u.length) setSelDate(u[0]); else { setLoading(false); setErr("No articles yet."); }
+      } catch(e) { setErr("Could not connect to database."); setLoading(false); }
+    })();
   }, []);
 
-  useEffect(() => {
-    if (!selectedDate) return;
-    async function loadArticles() {
-      setLoading(true); setError(null);
+  useEffect(function() {
+    if (!selDate) return;
+    (async function() {
+      setLoading(true); setErr(null);
       try {
-        const rows = await supabaseFetch("articles",
-          `published_date=eq.${selectedDate}&select=id,category,subcategory,headline,tldr,summary,why_it_matters,sources,source_urls,time_published&order=time_published.desc`
-        );
+        var rows = await sbFetch("articles", "published_date=eq." + selDate + "&select=id,category,subcategory,headline,tldr,summary,why_it_matters,sources,source_urls,time_published&order=time_published.desc");
         setArticles(rows);
-      } catch (e) { setError("Failed to load articles."); }
+      } catch(e) { setErr("Failed to load."); }
       setLoading(false);
-    }
-    loadArticles();
-  }, [selectedDate]);
+    })();
+  }, [selDate]);
 
-  useEffect(() => { if (showSearch && searchRef.current) searchRef.current.focus(); }, [showSearch]);
+  useEffect(function() { if (search && sRef.current) sRef.current.focus(); }, [search]);
 
-  const taggedArticles = articles.map((a) => ({ ...a, liveEvent: matchLiveEvent(a) }));
-
-  const activeLiveEvents = LIVE_EVENTS.filter((event) =>
-    taggedArticles.some((a) => a.liveEvent === event.id)
-  );
-
-  const filtered = taggedArticles.filter((a) => {
-    const liveMatch = activeLiveEvents.some((e) => e.id === selectedCategory);
-    if (liveMatch) return a.liveEvent === selectedCategory;
-    const catMatch = selectedCategory === "all" || a.category === selectedCategory;
-    const q = searchQuery.toLowerCase();
-    const searchMatch = !q || a.headline.toLowerCase().includes(q) || a.tldr.toLowerCase().includes(q);
-    return catMatch && searchMatch;
+  var filtered = articles.filter(function(a) {
+    var cm = selCat === "all" || a.category === selCat;
+    var q = query.toLowerCase();
+    var sm = !q || a.headline.toLowerCase().indexOf(q) >= 0 || a.tldr.toLowerCase().indexOf(q) >= 0;
+    return cm && sm;
   });
 
-  const categoryCounts = {};
-  taggedArticles.forEach((a) => {
-    categoryCounts[a.category] = (categoryCounts[a.category] || 0) + 1;
-    if (a.liveEvent) categoryCounts[a.liveEvent] = (categoryCounts[a.liveEvent] || 0) + 1;
-  });
+  var cc = {};
+  articles.forEach(function(a) { cc[a.category] = (cc[a.category] || 0) + 1; });
+  var hasBrk = cc["breaking"] > 0;
 
-  async function handleSubscribe(e) {
+  async function onSub(e) {
     e.preventDefault();
-    if (!email || !email.includes("@")) return;
+    if (!email || email.indexOf("@") < 0) return;
     try {
-      await fetch(`${SUPABASE_URL}/rest/v1/subscribers`, {
+      await fetch(SUPABASE_URL + "/rest/v1/subscribers", {
         method: "POST",
-        headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, "Content-Type": "application/json", Prefer: "return=minimal" },
-        body: JSON.stringify({ email, subscribed_at: new Date().toISOString() }),
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + SUPABASE_ANON_KEY, "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ email: email, subscribed_at: new Date().toISOString() })
       });
-    } catch (err) {}
-    setSubscribed(true);
+    } catch(x) {}
+    setSubbed(true);
   }
+
+  var CSS = '@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap");*{box-sizing:border-box;margin:0;padding:0}.lb-h{background:#1A1714;color:#FAF8F5;padding:18px 24px 14px;position:sticky;top:0;z-index:100}.lb-mh{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.lb-t{font-family:"Instrument Serif",Georgia,serif;font-size:28px;font-weight:400;letter-spacing:-.5px;line-height:1}.lb-t span{color:#D4A853}.lb-st{font-family:"DM Sans",sans-serif;font-size:10px;letter-spacing:3px;text-transform:uppercase;color:#8A847C;margin-top:3px}.lb-sb{background:none;border:1px solid #3A3530;color:#8A847C;width:34px;height:34px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:15px;transition:.2s}.lb-sb:hover{border-color:#D4A853;color:#D4A853}.lb-si{width:100%;padding:9px 14px;background:#2A2520;border:1px solid #3A3530;border-radius:8px;color:#FAF8F5;font-family:"DM Sans",sans-serif;font-size:13px;outline:none;margin-bottom:10px}.lb-si:focus{border-color:#D4A853}.lb-si::placeholder{color:#5A554F}.lb-ds{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px}.lb-dc{font-family:"DM Sans",sans-serif;font-size:12px;padding:5px 13px;border-radius:20px;border:1px solid #3A3530;background:transparent;color:#8A847C;cursor:pointer;transition:.2s;white-space:nowrap}.lb-dc:hover{border-color:#5A554F;color:#C0BAB2}.lb-dc.a{background:#D4A853;border-color:#D4A853;color:#1A1714;font-weight:500}.lb-cs{display:flex;gap:4px;padding:10px 24px;overflow-x:auto;background:#F3EFEA;border-bottom:1px solid #E0DBD4}.lb-c{font-family:"DM Sans",sans-serif;font-size:11px;padding:5px 10px;border-radius:20px;border:1px solid #D4CFC7;background:transparent;color:#6B665E;cursor:pointer;white-space:nowrap;transition:.2s;display:flex;align-items:center;gap:4px}.lb-c:hover{border-color:#9A958E}.lb-c.a{background:#1A1714;border-color:#1A1714;color:#FAF8F5}.lb-cn{font-size:10px;background:rgba(0,0,0,.08);padding:1px 6px;border-radius:10px}.lb-c.a .lb-cn{background:rgba(255,255,255,.15)}.lb-cl{border-color:#B71C1C;color:#B71C1C}.lb-cl.a{background:#B71C1C;border-color:#B71C1C;color:#fff}.lb-ld{width:6px;height:6px;border-radius:50%;background:#B71C1C;display:inline-block;animation:lp 1.5s infinite}.lb-cl.a .lb-ld{background:#fff}@keyframes lp{0%,100%{opacity:1}50%{opacity:.4}}.lb-ct{max-width:700px;margin:0 auto;padding:20px 20px 40px}.lb-dh{font-family:"Instrument Serif",Georgia,serif;font-size:20px;color:#1A1714;margin-bottom:2px}.lb-dn{font-family:"DM Sans",sans-serif;font-size:12px;color:#9A958E;margin-bottom:18px}.lb-k{background:#fff;border:1px solid #E8E4DE;border-radius:10px;margin-bottom:6px;position:relative;overflow:hidden;transition:.25s}.lb-k:hover{border-color:#CCC8C0;box-shadow:0 2px 10px rgba(26,23,20,.05)}.lb-k.x{border-color:#B0AAA2;box-shadow:0 4px 20px rgba(26,23,20,.08);margin-bottom:12px}.lb-kb{border-left:3px solid #B71C1C}.lb-ac{position:absolute;left:0;top:0;bottom:0;width:3px}.lb-t1{padding:12px 14px 12px 16px;cursor:pointer;display:flex;align-items:center;gap:10px}.lb-t1l{flex:1;min-width:0}.lb-t1m{display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap}.lb-bg{font-family:"DM Sans",sans-serif;font-size:9px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;padding:2px 7px;border-radius:3px;color:#fff}.lb-bb{background:#B71C1C;display:flex;align-items:center;gap:4px}.lb-su{font-family:"DM Sans",sans-serif;font-size:9px;padding:2px 6px;border-radius:3px;color:#8A847C;background:#F0ECE7}.lb-tm{font-family:"DM Sans",sans-serif;font-size:10px;color:#C0BAB2}.lb-tl{font-family:"DM Sans",sans-serif;font-size:13.5px;line-height:1.4;color:#2A2520}.lb-ch{font-size:18px;color:#C0BAB2;flex-shrink:0;transition:transform .25s,color .2s;user-select:none}.lb-k.x .lb-ch{transform:rotate(180deg);color:#D4A853}.lb-t2{padding:0 16px 14px;border-top:1px solid #F0ECE7}.lb-hl{font-family:"Instrument Serif",Georgia,serif;font-size:17px;line-height:1.3;color:#1A1714;margin:12px 0 8px}.lb-sm{font-family:"DM Sans",sans-serif;font-size:13px;line-height:1.65;color:#5A554F;margin-bottom:10px}.lb-wm{padding:10px 12px;background:linear-gradient(135deg,#FDFAF3,#FBF6EA);border:1px solid #EDE4CC;border-radius:8px;margin-bottom:10px}.lb-wl{font-family:"DM Sans",sans-serif;font-size:9px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:#C09A3A;margin-bottom:3px}.lb-wt{font-family:"DM Sans",sans-serif;font-size:12.5px;line-height:1.55;color:#5A4A2A}.lb-ft{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}.lb-sr{font-family:"DM Sans",sans-serif;font-size:11px;color:#B0AAA2}.lb-sr span{color:#9A958E}.lb-ax{display:flex;align-items:center;gap:6px}.lb-sh{font-family:"DM Sans",sans-serif;font-size:11px;font-weight:500;color:#6B665E;padding:5px 12px;border:1px solid #D4CFC7;border-radius:20px;background:#FAFAF8;cursor:pointer;transition:.2s;white-space:nowrap}.lb-sh:hover{border-color:#9A958E;background:#F0ECE7}.lb-dp{display:inline-flex;align-items:center;gap:5px;font-family:"DM Sans",sans-serif;font-size:11px;font-weight:500;color:#8B6914;text-decoration:none;padding:5px 12px;border:1px solid #D4A853;border-radius:20px;background:linear-gradient(135deg,#FDF6E8,#FBF0D8);transition:.2s;white-space:nowrap}.lb-dp:hover{background:linear-gradient(135deg,#FBF0D8,#F5E6C0);transform:translateY(-1px);box-shadow:0 2px 8px rgba(212,168,83,.2)}.lb-nl{max-width:700px;margin:0 auto;padding:0 20px 60px}.lb-nb{background:#1A1714;border-radius:12px;padding:28px 24px;text-align:center}.lb-nt{font-family:"Instrument Serif",Georgia,serif;font-size:22px;color:#FAF8F5;margin-bottom:6px}.lb-nd{font-family:"DM Sans",sans-serif;font-size:13px;color:#8A847C;margin-bottom:16px}.lb-nf{display:flex;gap:8px;max-width:400px;margin:0 auto}.lb-ni{flex:1;padding:10px 14px;border-radius:8px;border:1px solid #3A3530;background:#2A2520;color:#FAF8F5;font-family:"DM Sans",sans-serif;font-size:13px;outline:none}.lb-ni:focus{border-color:#D4A853}.lb-ni::placeholder{color:#5A554F}.lb-nx{padding:10px 20px;border-radius:8px;border:none;background:#D4A853;color:#1A1714;font-family:"DM Sans",sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:.2s;white-space:nowrap}.lb-nx:hover{background:#E0B960}.lb-no{font-family:"DM Sans",sans-serif;font-size:14px;color:#D4A853}.lb-se{text-align:center;padding:50px 20px;font-family:"DM Sans",sans-serif}.lb-se p{font-size:14px;color:#9A958E}.lb-se .e{color:#C62828}.lb-lo{display:flex;justify-content:center;gap:6px;padding:60px 0}.lb-do{width:8px;height:8px;border-radius:50%;background:#D4A853;animation:bo 1.2s infinite}.lb-do:nth-child(2){animation-delay:.15s}.lb-do:nth-child(3){animation-delay:.3s}@keyframes bo{0%,80%,100%{opacity:.25;transform:scale(.8)}40%{opacity:1;transform:scale(1.1)}}@keyframes fi{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}.lb-fi{animation:fi .3s ease forwards}';
 
   return (
     <div style={{ minHeight: "100vh", background: "#FAF8F5", fontFamily: "'Instrument Serif', Georgia, serif" }}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap');
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        .lb-header { background: #1A1714; color: #FAF8F5; padding: 18px 24px 14px; position: sticky; top: 0; z-index: 100; }
-        .lb-masthead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
-        .lb-title { font-family: 'Instrument Serif', Georgia, serif; font-size: 28px; font-weight: 400; letter-spacing: -0.5px; line-height: 1; }
-        .lb-title span { color: #D4A853; }
-        .lb-sub { font-family: 'DM Sans', sans-serif; font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: #8A847C; margin-top: 3px; }
-        .lb-search-btn { background: none; border: 1px solid #3A3530; color: #8A847C; width: 34px; height: 34px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 15px; transition: all 0.2s; }
-        .lb-search-btn:hover { border-color: #D4A853; color: #D4A853; }
-        .lb-search-bar { width: 100%; padding: 9px 14px; background: #2A2520; border: 1px solid #3A3530; border-radius: 8px; color: #FAF8F5; font-family: 'DM Sans', sans-serif; font-size: 13px; outline: none; margin-bottom: 10px; }
-        .lb-search-bar:focus { border-color: #D4A853; }
-        .lb-search-bar::placeholder { color: #5A554F; }
-        .lb-dates { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
-        .lb-date-chip { font-family: 'DM Sans', sans-serif; font-size: 12px; padding: 5px 13px; border-radius: 20px; border: 1px solid #3A3530; background: transparent; color: #8A847C; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
-        .lb-date-chip:hover { border-color: #5A554F; color: #C0BAB2; }
-        .lb-date-chip.active { background: #D4A853; border-color: #D4A853; color: #1A1714; font-weight: 500; }
-        .lb-cats { display: flex; gap: 4px; padding: 10px 24px; overflow-x: auto; background: #F3EFEA; border-bottom: 1px solid #E0DBD4; }
-        .lb-cat { font-family: 'DM Sans', sans-serif; font-size: 11px; padding: 5px 10px; border-radius: 20px; border: 1px solid #D4CFC7; background: transparent; color: #6B665E; cursor: pointer; white-space: nowrap; transition: all 0.2s; display: flex; align-items: center; gap: 4px; }
-        .lb-cat:hover { border-color: #9A958E; }
-        .lb-cat.active { background: #1A1714; border-color: #1A1714; color: #FAF8F5; }
-        .lb-cat-n { font-size: 10px; background: rgba(0,0,0,0.08); padding: 1px 6px; border-radius: 10px; }
-        .lb-cat.active .lb-cat-n { background: rgba(255,255,255,0.15); }
-        .lb-cat-live { border-color: #B71C1C; color: #B71C1C; animation: livePulse 2s infinite; }
-        .lb-cat-live.active { background: #B71C1C; border-color: #B71C1C; color: #fff; }
-        @keyframes livePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
-        .lb-live-dot { width: 6px; height: 6px; border-radius: 50%; background: #B71C1C; display: inline-block; animation: livePulse 1.5s infinite; }
-        .lb-cat-live.active .lb-live-dot { background: #fff; }
-        .lb-content { max-width: 700px; margin: 0 auto; padding: 20px 20px 40px; }
-        .lb-day-h { font-family: 'Instrument Serif', Georgia, serif; font-size: 20px; color: #1A1714; margin-bottom: 2px; }
-        .lb-day-n { font-family: 'DM Sans', sans-serif; font-size: 12px; color: #9A958E; margin-bottom: 18px; }
-        .lb-card { background: #FFFFFF; border: 1px solid #E8E4DE; border-radius: 10px; margin-bottom: 6px; position: relative; overflow: hidden; transition: all 0.25s ease; }
-        .lb-card:hover { border-color: #CCC8C0; box-shadow: 0 2px 10px rgba(26,23,20,0.05); }
-        .lb-card.expanded { border-color: #B0AAA2; box-shadow: 0 4px 20px rgba(26,23,20,0.08); margin-bottom: 12px; }
-        .lb-accent { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
-        .lb-tier1 { padding: 12px 14px 12px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; }
-        .lb-tier1-left { flex: 1; min-width: 0; }
-        .lb-tier1-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap; }
-        .lb-badge { font-family: 'DM Sans', sans-serif; font-size: 9px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase; padding: 2px 7px; border-radius: 3px; color: white; }
-        .lb-live-badge { font-family: 'DM Sans', sans-serif; font-size: 9px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; padding: 2px 7px; border-radius: 3px; color: white; background: #B71C1C; display: flex; align-items: center; gap: 4px; }
-        .lb-sub-badge { font-family: 'DM Sans', sans-serif; font-size: 9px; padding: 2px 6px; border-radius: 3px; color: #8A847C; background: #F0ECE7; }
-        .lb-time { font-family: 'DM Sans', sans-serif; font-size: 10px; color: #C0BAB2; }
-        .lb-tldr { font-family: 'DM Sans', sans-serif; font-size: 13.5px; font-weight: 400; line-height: 1.4; color: #2A2520; }
-        .lb-chevron { font-size: 18px; color: #C0BAB2; flex-shrink: 0; transition: transform 0.25s, color 0.2s; user-select: none; }
-        .lb-card.expanded .lb-chevron { transform: rotate(180deg); color: #D4A853; }
-        .lb-tier2 { padding: 0 16px 14px; border-top: 1px solid #F0ECE7; }
-        .lb-headline { font-family: 'Instrument Serif', Georgia, serif; font-size: 17px; line-height: 1.3; color: #1A1714; margin: 12px 0 8px; }
-        .lb-summary { font-family: 'DM Sans', sans-serif; font-size: 13px; line-height: 1.65; color: #5A554F; margin-bottom: 10px; }
-        .lb-wim { padding: 10px 12px; background: linear-gradient(135deg, #FDFAF3, #FBF6EA); border: 1px solid #EDE4CC; border-radius: 8px; margin-bottom: 10px; }
-        .lb-wim-label { font-family: 'DM Sans', sans-serif; font-size: 9px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: #C09A3A; margin-bottom: 3px; }
-        .lb-wim-text { font-family: 'DM Sans', sans-serif; font-size: 12.5px; line-height: 1.55; color: #5A4A2A; }
-        .lb-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
-        .lb-sources { font-family: 'DM Sans', sans-serif; font-size: 11px; color: #B0AAA2; }
-        .lb-sources span { color: #9A958E; }
-        .lb-actions { display: flex; align-items: center; gap: 6px; }
-        .lb-share { font-family: 'DM Sans', sans-serif; font-size: 11px; font-weight: 500; color: #6B665E; padding: 5px 12px; border: 1px solid #D4CFC7; border-radius: 20px; background: #FAFAF8; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
-        .lb-share:hover { border-color: #9A958E; background: #F0ECE7; }
-        .lb-deep { display: inline-flex; align-items: center; gap: 5px; font-family: 'DM Sans', sans-serif; font-size: 11px; font-weight: 500; color: #8B6914; text-decoration: none; padding: 5px 12px; border: 1px solid #D4A853; border-radius: 20px; background: linear-gradient(135deg, #FDF6E8, #FBF0D8); transition: all 0.2s; white-space: nowrap; }
-        .lb-deep:hover { background: linear-gradient(135deg, #FBF0D8, #F5E6C0); transform: translateY(-1px); box-shadow: 0 2px 8px rgba(212,168,83,0.2); }
-        .lb-newsletter { max-width: 700px; margin: 0 auto; padding: 0 20px 60px; }
-        .lb-nl-box { background: #1A1714; border-radius: 12px; padding: 28px 24px; text-align: center; }
-        .lb-nl-title { font-family: 'Instrument Serif', Georgia, serif; font-size: 22px; color: #FAF8F5; margin-bottom: 6px; }
-        .lb-nl-desc { font-family: 'DM Sans', sans-serif; font-size: 13px; color: #8A847C; margin-bottom: 16px; }
-        .lb-nl-form { display: flex; gap: 8px; max-width: 400px; margin: 0 auto; }
-        .lb-nl-input { flex: 1; padding: 10px 14px; border-radius: 8px; border: 1px solid #3A3530; background: #2A2520; color: #FAF8F5; font-family: 'DM Sans', sans-serif; font-size: 13px; outline: none; }
-        .lb-nl-input:focus { border-color: #D4A853; }
-        .lb-nl-input::placeholder { color: #5A554F; }
-        .lb-nl-btn { padding: 10px 20px; border-radius: 8px; border: none; background: #D4A853; color: #1A1714; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
-        .lb-nl-btn:hover { background: #E0B960; }
-        .lb-nl-success { font-family: 'DM Sans', sans-serif; font-size: 14px; color: #D4A853; }
-        .lb-state { text-align: center; padding: 50px 20px; font-family: 'DM Sans', sans-serif; }
-        .lb-state-ico { font-size: 36px; margin-bottom: 10px; }
-        .lb-state p { font-size: 14px; color: #9A958E; }
-        .lb-state .error { color: #C62828; }
-        .lb-loader { display: flex; justify-content: center; gap: 6px; padding: 60px 0; }
-        .lb-dot { width: 8px; height: 8px; border-radius: 50%; background: #D4A853; animation: bounce 1.2s infinite; }
-        .lb-dot:nth-child(2) { animation-delay: 0.15s; }
-        .lb-dot:nth-child(3) { animation-delay: 0.3s; }
-        @keyframes bounce { 0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1.1); } }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-        .lb-fade { animation: fadeIn 0.3s ease forwards; }
-      `}</style>
+      <style dangerouslySetInnerHTML={{ __html: CSS }} />
 
-      <header className="lb-header">
-        <div className="lb-masthead">
+      <header className="lb-h">
+        <div className="lb-mh">
           <div>
-            <div className="lb-title">Le <span>Bref</span></div>
-            <div className="lb-sub">Today's world, briefly</div>
+            <div className="lb-t">Le <span>Bref</span></div>
+            <div className="lb-st">Today's world, briefly</div>
           </div>
-          <button className="lb-search-btn" onClick={() => { setShowSearch(!showSearch); setSearchQuery(""); }}>
-            {showSearch ? "\u2715" : "\u2315"}
+          <button className="lb-sb" onClick={function() { setSearch(!search); setQuery(""); }}>
+            {search ? "\u2715" : "\u2315"}
           </button>
         </div>
-        {showSearch && (
-          <input ref={searchRef} className="lb-search-bar" placeholder="Search highlights..."
-            value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-        )}
-        <div className="lb-dates">
-          {availableDates.slice(0, 7).map((d) => (
-            <button key={d} className={`lb-date-chip ${selectedDate === d ? "active" : ""}`}
-              onClick={() => { setSelectedDate(d); setExpandedId(null); setSelectedCategory("all"); }}>
-              {getDateLabel(d)}
-            </button>
-          ))}
+        {search && <input ref={sRef} className="lb-si" placeholder="Search highlights..." value={query} onChange={function(e) { setQuery(e.target.value); }} />}
+        <div className="lb-ds">
+          {dates.slice(0, 7).map(function(d) {
+            return <button key={d} className={"lb-dc" + (selDate === d ? " a" : "")} onClick={function() { setSelDate(d); setExpId(null); setSelCat("all"); }}>{getDateLabel(d)}</button>;
+          })}
         </div>
       </header>
 
-      <div className="lb-cats">
-        {activeLiveEvents.map((event) => (
-          <button key={event.id}
-            className={`lb-cat lb-cat-live ${selectedCategory === event.id ? "active" : ""}`}
-            onClick={() => { setSelectedCategory(event.id); setExpandedId(null); }}>
-            <span className="lb-live-dot" />
-            {event.label}
-            {categoryCounts[event.id] > 0 && <span className="lb-cat-n">{categoryCounts[event.id]}</span>}
-          </button>
-        ))}
-        {CATEGORIES.map((cat) => (
-          <button key={cat.id} className={`lb-cat ${selectedCategory === cat.id ? "active" : ""}`}
-            onClick={() => { setSelectedCategory(cat.id); setExpandedId(null); }}>
-            <span>{cat.icon}</span> {cat.label}
-            {cat.id !== "all" && categoryCounts[cat.id] > 0 && (
-              <span className="lb-cat-n">{categoryCounts[cat.id]}</span>
-            )}
-          </button>
-        ))}
+      <div className="lb-cs">
+        {CATEGORIES.map(function(cat) {
+          if (cat.id === "breaking" && !hasBrk) return null;
+          var live = cat.isLive && hasBrk;
+          return <button key={cat.id} className={"lb-c" + (selCat === cat.id ? " a" : "") + (live ? " lb-cl" : "")} onClick={function() { setSelCat(cat.id); setExpId(null); }}>
+            {live ? <span className="lb-ld" /> : <span>{cat.icon}</span>}
+            {" "}{cat.label}
+            {cat.id !== "all" && cc[cat.id] > 0 && <span className="lb-cn">{cc[cat.id]}</span>}
+          </button>;
+        })}
       </div>
 
-      <div className="lb-content">
-        {error ? (
-          <div className="lb-state"><div className="lb-state-ico">{"\u26A0\uFE0F"}</div><p className="error">{error}</p></div>
+      <div className="lb-ct">
+        {err ? (
+          <div className="lb-se"><p className="e">{err}</p></div>
         ) : loading ? (
-          <div className="lb-loader"><div className="lb-dot" /><div className="lb-dot" /><div className="lb-dot" /></div>
-        ) : (
-          <>
-            <h2 className="lb-day-h">{selectedDate && formatDate(selectedDate)}</h2>
-            <p className="lb-day-n">
-              {filtered.length} highlight{filtered.length !== 1 ? "s" : ""}
-              {selectedCategory !== "all" && !activeLiveEvents.some((e) => e.id === selectedCategory) &&
-                ` in ${CATEGORIES.find((c) => c.id === selectedCategory)?.label}`}
-              {activeLiveEvents.some((e) => e.id === selectedCategory) &&
-                ` about ${activeLiveEvents.find((e) => e.id === selectedCategory)?.label}`}
-            </p>
+          <div className="lb-lo"><div className="lb-do" /><div className="lb-do" /><div className="lb-do" /></div>
+        ) : (<>
+          <h2 className="lb-dh">{selDate && formatDate(selDate)}</h2>
+          <p className="lb-dn">{filtered.length + " highlight" + (filtered.length !== 1 ? "s" : "")}{selCat !== "all" && (" in " + ((CATEGORIES.find(function(c) { return c.id === selCat; }) || {}).label || ""))}</p>
 
-            {filtered.length === 0 ? (
-              <div className="lb-state"><div className="lb-state-ico">{"\uD83D\uDCED"}</div>
-                <p>No highlights found{searchQuery ? " matching your search" : " for this filter"}.</p>
-              </div>
-            ) : (
-              filtered.map((article, i) => {
-                const isExpanded = expandedId === article.id;
-                const sources = Array.isArray(article.sources) ? article.sources : [];
-                const isLive = !!article.liveEvent;
-                return (
-                  <div key={article.id}
-                    className={`lb-card lb-fade ${isExpanded ? "expanded" : ""}`}
-                    style={{ animationDelay: `${i * 0.04}s` }}>
-                    <div className="lb-accent" style={{ background: getCatColor(article.category) }} />
-                    <div className="lb-tier1" onClick={() => setExpandedId(isExpanded ? null : article.id)}>
-                      <div className="lb-tier1-left">
-                        <div className="lb-tier1-meta">
-                          <span className="lb-badge" style={{ background: getCatColor(article.category) }}>{article.category}</span>
-                          {isLive && (
-                            <span className="lb-live-badge">
-                              <span className="lb-live-dot" style={{ background: "#fff", width: 5, height: 5 }} />
-                              LIVE
-                            </span>
-                          )}
-                          {article.subcategory && <span className="lb-sub-badge">{formatSubcategory(article.subcategory)}</span>}
-                          {article.time_published && <span className="lb-time">{article.time_published}</span>}
-                        </div>
-                        <div className="lb-tldr">{article.tldr}</div>
-                      </div>
-                      <div className="lb-chevron">{"\u2304"}</div>
-                    </div>
-                    {isExpanded && (
-                      <div className="lb-tier2">
-                        <div className="lb-headline">{article.headline}</div>
-                        <div className="lb-summary">{article.summary}</div>
-                        {article.why_it_matters && (
-                          <div className="lb-wim">
-                            <div className="lb-wim-label">{"\u2726"} Why It Matters</div>
-                            <div className="lb-wim-text">{article.why_it_matters}</div>
-                          </div>
-                        )}
-                        <div className="lb-footer">
-                          <div className="lb-sources">{sources.length > 0 && <>Sources: <span>{sources.join(" \u00B7 ")}</span></>}</div>
-                          <div className="lb-actions">
-                            <button className="lb-share" onClick={(e) => shareArticle(article, e)}>Share</button>
-                            <a href={buildClaudeLink(article)} target="_blank" rel="noopener noreferrer" className="lb-deep">{"\u2726"} Go deeper with Claude {"\u2192"}</a>
-                          </div>
-                        </div>
-                      </div>
-                    )}
+          {filtered.length === 0 ? (
+            <div className="lb-se"><p>No highlights found{query ? " matching your search" : ""}.</p></div>
+          ) : filtered.map(function(a, i) {
+            var ex = expId === a.id;
+            var src = Array.isArray(a.sources) ? a.sources : [];
+            var brk = a.category === "breaking";
+            return <div key={a.id} className={"lb-k lb-fi" + (ex ? " x" : "") + (brk ? " lb-kb" : "")} style={{ animationDelay: (i * 0.04) + "s" }}>
+              <div className="lb-ac" style={{ background: getCatColor(a.category) }} />
+              <div className="lb-t1" onClick={function() { setExpId(ex ? null : a.id); }}>
+                <div className="lb-t1l">
+                  <div className="lb-t1m">
+                    {brk ? <span className="lb-bg lb-bb"><span className="lb-ld" style={{ background: "#fff", width: 5, height: 5 }} /> BREAKING</span>
+                      : <span className="lb-bg" style={{ background: getCatColor(a.category) }}>{a.category}</span>}
+                    {a.subcategory && <span className="lb-su">{fmtSub(a.subcategory)}</span>}
+                    {a.time_published && <span className="lb-tm">{a.time_published}</span>}
                   </div>
-                );
-              })
-            )}
-          </>
-        )}
+                  <div className="lb-tl">{a.tldr}</div>
+                </div>
+                <div className="lb-ch">{"\u2304"}</div>
+              </div>
+              {ex && <div className="lb-t2">
+                <div className="lb-hl">{a.headline}</div>
+                <div className="lb-sm">{a.summary}</div>
+                {a.why_it_matters && <div className="lb-wm"><div className="lb-wl">{"\u2726"} Why It Matters</div><div className="lb-wt">{a.why_it_matters}</div></div>}
+                <div className="lb-ft">
+                  <div className="lb-sr">{src.length > 0 && <>Sources: <span>{src.join(" \u00B7 ")}</span></>}</div>
+                  <div className="lb-ax">
+                    <button className="lb-sh" onClick={function(e) { doShare(a, e); }}>Share</button>
+                    <a href={buildClaudeLink(a)} target="_blank" rel="noopener noreferrer" className="lb-dp">{"\u2726"} Go deeper with Claude {"\u2192"}</a>
+                  </div>
+                </div>
+              </div>}
+            </div>;
+          })}
+        </>)}
       </div>
 
-      <div className="lb-newsletter">
-        <div className="lb-nl-box">
-          <div className="lb-nl-title">Get Le Bref in your inbox</div>
-          <div className="lb-nl-desc">The day's most important stories, delivered every morning. Free forever.</div>
-          {subscribed ? (
-            <div className="lb-nl-success">{"\u2713"} You're in! Check your inbox tomorrow morning.</div>
-          ) : (
-            <div className="lb-nl-form">
-              <input className="lb-nl-input" type="email" placeholder="your@email.com"
-                value={email} onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSubscribe(e)} />
-              <button className="lb-nl-btn" onClick={handleSubscribe}>Subscribe</button>
-            </div>
-          )}
+      <div className="lb-nl">
+        <div className="lb-nb">
+          <div className="lb-nt">Get Le Bref in your inbox</div>
+          <div className="lb-nd">The day's most important stories, delivered every morning. Free forever.</div>
+          {subbed ? <div className="lb-no">{"\u2713"} You're in! See you tomorrow morning.</div>
+          : <div className="lb-nf">
+              <input className="lb-ni" type="email" placeholder="your@email.com" value={email} onChange={function(e) { setEmail(e.target.value); }} onKeyDown={function(e) { if (e.key === "Enter") onSub(e); }} />
+              <button className="lb-nx" onClick={onSub}>Subscribe</button>
+            </div>}
         </div>
       </div>
     </div>
