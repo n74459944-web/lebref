@@ -272,7 +272,7 @@ export default function LeBref({ initialDates, initialDateCounts, initialArticle
                 <div className="lb-t1l">
                   <div className="lb-t1m">
                     {brk ? <span className="lb-bg lb-bb"><span className="lb-ld" style={{ background: "#fff", width: 5, height: 5 }} /> BREAKING</span>
-                      : <span className="lb-bg" style={{ background: catCol(a.category) }}>{a.category}</span>}
+                      : <span className="lb-bg" style={{ background: catCol(a.category) }}>{(CATS.find(function(x){return x.id===a.category})||{}).label||a.category}</span>}
                     {a.subcategory && <span className="lb-su">{fmtSub(a.subcategory)}</span>}
                     {a.time_published && <span className="lb-tm">{a.time_published}</span>}
                   </div>
