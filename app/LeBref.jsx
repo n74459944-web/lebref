@@ -1,44 +1,53 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useLang } from "./LangContext";
+import { t } from "./translations";
+import LangToggle from "./LangToggle";
 
 var SB_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 var SB_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 var GA_ID = process.env.NEXT_PUBLIC_GA_ID || "";
 
 var CATS = [
-  { id: "all", label: "All", icon: "\u25C9" },
-  { id: "breaking", label: "Breaking", icon: "\uD83D\uDD34", color: "#B71C1C", isLive: true },
-  { id: "politics", label: "Politics", icon: "\uD83C\uDFDB\uFE0F", color: "#C62828" },
-  { id: "economics", label: "Economics", icon: "\uD83D\uDCCA", color: "#1565C0" },
-  { id: "tech", label: "Tech & Science", icon: "\u26A1", color: "#6A1B9A" },
-  { id: "world", label: "World", icon: "\uD83C\uDF0D", color: "#2E7D32" },
-  { id: "health", label: "Health", icon: "\uD83E\uDE7A", color: "#00838F" },
-  { id: "crime", label: "Crime & Justice", icon: "\u2696\uFE0F", color: "#4E342E" },
+  { id: "all", icon: "\u25C9" },
+  { id: "breaking", icon: "\uD83D\uDD34", color: "#B71C1C", isLive: true },
+  { id: "politics", icon: "\uD83C\uDFDB\uFE0F", color: "#C62828" },
+  { id: "economics", icon: "\uD83D\uDCCA", color: "#1565C0" },
+  { id: "tech", icon: "\u26A1", color: "#6A1B9A" },
+  { id: "world", icon: "\uD83C\uDF0D", color: "#2E7D32" },
+  { id: "health", icon: "\uD83E\uDE7A", color: "#00838F" },
+  { id: "crime", icon: "\u2696\uFE0F", color: "#4E342E" },
 ];
 
 function catCol(id) { var c = CATS.find(function(x) { return x.id === id; }); return c ? c.color || "#888" : "#888"; }
 function claudeUrl(a) { return "https://claude.ai/new?q=" + encodeURIComponent("Explain this news story in depth. Cover the background, key players, what led to this, what happens next, and how it affects everyday people.\n\nHeadline: " + a.headline + "\nSummary: " + a.summary); }
 function slug(s) { return (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60); }
 function aLink(a) { return "/article/" + (a.published_date || "") + "/" + slug(a.headline); }
-function fmtDate(ds) { return new Date(ds + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }); }
+function fmtDate(ds, lang) { return new Date(ds + "T12:00:00").toLocaleDateString(lang === "fr" ? "fr-CA" : "en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }); }
 function fmtSub(s) { return s ? s.replace(/-/g, " ").replace(/\b\w/g, function(c) { return c.toUpperCase(); }) : ""; }
 
-function dateLabel(ds) {
+function dateLabel(ds, lang) {
   var today = new Date(); today.setHours(12, 0, 0, 0);
   var diff = Math.round((today - new Date(ds + "T12:00:00")) / 86400000);
-  if (diff === 0) return "Today";
-  if (diff === 1) return "Yesterday";
-  return new Date(ds + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  if (diff === 0) return lang === "fr" ? "Aujourd'hui" : "Today";
+  if (diff === 1) return lang === "fr" ? "Hier" : "Yesterday";
+  return new Date(ds + "T12:00:00").toLocaleDateString(lang === "fr" ? "fr-CA" : "en-US", { month: "short", day: "numeric" });
 }
 
-function timeAgo(isoStr) {
+function timeAgo(isoStr, lang) {
   if (!isoStr) return "";
   var diff = Math.floor((Date.now() - new Date(isoStr).getTime()) / 60000);
-  if (diff < 1) return "Just now";
-  if (diff < 60) return diff + "m ago";
-  if (diff < 1440) return Math.floor(diff / 60) + "h ago";
-  return Math.floor(diff / 1440) + "d ago";
+  if (diff < 1) return lang === "fr" ? "À l'instant" : "Just now";
+  if (diff < 60) return lang === "fr" ? ("il y a " + diff + " min") : (diff + "m ago");
+  if (diff < 1440) return lang === "fr" ? ("il y a " + Math.floor(diff / 60) + " h") : (Math.floor(diff / 60) + "h ago");
+  return lang === "fr" ? ("il y a " + Math.floor(diff / 1440) + " j") : (Math.floor(diff / 1440) + "d ago");
+}
+
+// Pick French content if available, otherwise fall back to English
+function localized(article, field, lang) {
+  if (lang === "fr" && article[field + "_fr"]) return article[field + "_fr"];
+  return article[field];
 }
 
 async function sbClient(table, params) {
@@ -66,6 +75,7 @@ function Skeleton() {
 }
 
 function InlineNL() {
+  var { lang } = useLang();
   var [em, setEm] = useState("");
   var [done, setDone] = useState(false);
   async function sub(e) {
@@ -74,19 +84,20 @@ function InlineNL() {
     try { await fetch(SB_URL + "/rest/v1/subscribers", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ email: em, subscribed_at: new Date().toISOString() }) }); } catch(x) {}
     setDone(true);
   }
-  if (done) return <div className="lb-inl"><div className="lb-inl-ok">{"\u2713"} You're in! See you tomorrow.</div></div>;
+  if (done) return <div className="lb-inl"><div className="lb-inl-ok">{"\u2713"} {t("nlThanks", lang)}</div></div>;
   return (
     <div className="lb-inl">
-      <div className="lb-inl-t">Get tomorrow's digest in your inbox {"\u2192"}</div>
+      <div className="lb-inl-t">{lang === "fr" ? "Recevez le prochain résumé par courriel" : "Get tomorrow's digest in your inbox"} {"\u2192"}</div>
       <div className="lb-inl-f">
-        <input className="lb-inl-i" type="email" placeholder="your@email.com" value={em} onChange={function(e) { setEm(e.target.value); }} onKeyDown={function(e) { if (e.key === "Enter") sub(e); }} />
-        <button className="lb-inl-b" onClick={sub}>Subscribe</button>
+        <input className="lb-inl-i" type="email" placeholder={t("nlPlaceholder", lang)} value={em} onChange={function(e) { setEm(e.target.value); }} onKeyDown={function(e) { if (e.key === "Enter") sub(e); }} />
+        <button className="lb-inl-b" onClick={sub}>{t("nlButton", lang)}</button>
       </div>
     </div>
   );
 }
 
 export default function LeBref({ initialDates, initialDateCounts, initialArticles, initialError }) {
+  var { lang } = useLang();
   // Use SSG data for initial render
   var firstDate = initialDates && initialDates.length > 0 ? initialDates[0] : null;
 
@@ -111,11 +122,11 @@ export default function LeBref({ initialDates, initialDateCounts, initialArticle
 
   // Tick the "Updated X ago" every 60s client-side
   useEffect(function() {
-    function tick() { if (lastUpdated) setUpdatedText(timeAgo(lastUpdated)); }
+    function tick() { if (lastUpdated) setUpdatedText(timeAgo(lastUpdated, lang)); }
     tick();
     var iv = setInterval(tick, 60000);
     return function() { clearInterval(iv); };
-  }, [lastUpdated]);
+  }, [lastUpdated, lang]);
 
   function toggleDark() { var n = !dark; setDark(n); try { localStorage.setItem("lb-dark", n ? "1" : "0"); } catch(e) {} }
 
@@ -167,7 +178,7 @@ export default function LeBref({ initialDates, initialDateCounts, initialArticle
     (async function() {
       setLoading(true); setErr(null);
       try {
-        var rows = await sbClient("articles", "published_date=eq." + selDate + "&select=id,category,subcategory,headline,tldr,summary,why_it_matters,sources,source_urls,time_published,published_date,created_at&order=time_published.desc");
+        var rows = await sbClient("articles", "published_date=eq." + selDate + "&select=id,category,subcategory,headline,tldr,summary,why_it_matters,headline_fr,tldr_fr,summary_fr,why_it_matters_fr,sources,source_urls,time_published,published_date,created_at&order=time_published.desc");
         setArticles(rows);
         if (rows.length > 0) setLastUpdated(rows[0].created_at);
         setFetchedDates(function(prev) { var n = Object.assign({}, prev); n[selDate] = true; return n; });
@@ -213,14 +224,15 @@ export default function LeBref({ initialDates, initialDateCounts, initialArticle
         <div className="lb-mh">
           <div>
             <div className="lb-t">Le <span>Bref</span></div>
-            <div className="lb-st">Today's world, briefly</div>
+            <div className="lb-st">{t("tagline", lang)}</div>
           </div>
           <div className="lb-hb">
-            <button className="lb-sb" onClick={toggleDark} title={dark ? "Light mode" : "Dark mode"}>{dark ? "\u2600" : "\u263E"}</button>
+            <LangToggle />
+            <button className="lb-sb" onClick={toggleDark} title={dark ? t("lightMode", lang) : t("darkMode", lang)}>{dark ? "\u2600" : "\u263E"}</button>
             <button className="lb-sb" onClick={function() { setSearch(!search); setQuery(""); }}>{search ? "\u2715" : "\u2315"}</button>
           </div>
         </div>
-        {search && <input ref={sRef} className="lb-si" placeholder="Search highlights..." value={query} onChange={function(e) { setQuery(e.target.value); }} />}
+        {search && <input ref={sRef} className="lb-si" placeholder={t("searchPlaceholder", lang)} value={query} onChange={function(e) { setQuery(e.target.value); }} />}
         <div className="lb-ds">
           {dates.slice(0, 7).map(function(d) {
             return <button key={d} className={"lb-dc" + (selDate === d ? " a" : "")} onClick={function() {
@@ -233,7 +245,7 @@ export default function LeBref({ initialDates, initialDateCounts, initialArticle
                 if (initialArticles[d].length > 0) setLastUpdated(initialArticles[d][0].created_at);
               }
             }}>
-              {dateLabel(d)}
+              {dateLabel(d, lang)}
               {dateCounts[d] && <span className="lb-dc-n">({dateCounts[d]})</span>}
             </button>;
           })}
@@ -246,7 +258,7 @@ export default function LeBref({ initialDates, initialDateCounts, initialArticle
           var live = cat.isLive && hasBrk;
           return <button key={cat.id} className={"lb-c" + (selCat === cat.id ? " a" : "") + (live ? " lb-cl" : "")} onClick={function() { setSelCat(cat.id); setExpId(null); }}>
             {live ? <span className="lb-ld" /> : <span>{cat.icon}</span>}
-            {" "}{cat.label}
+            {" "}{t(cat.id, lang)}
             {cat.id !== "all" && cc[cat.id] > 0 && <span className="lb-cn">{cc[cat.id]}</span>}
           </button>;
         })}
@@ -258,9 +270,9 @@ export default function LeBref({ initialDates, initialDateCounts, initialArticle
         ) : loading ? (
           <>{[0,1,2,3,4].map(function(i) { return <Skeleton key={i} />; })}</>
         ) : (<>
-          <h2 className="lb-dh">{selDate && fmtDate(selDate)}</h2>
-          <p className="lb-dn">{filtered.length + " highlight" + (filtered.length !== 1 ? "s" : "")}{selCat !== "all" && (" in " + ((CATS.find(function(c) { return c.id === selCat; }) || {}).label || ""))}</p>
-          {updatedText && <p className="lb-upd">Updated {updatedText}</p>}
+          <h2 className="lb-dh">{selDate && fmtDate(selDate, lang)}</h2>
+          <p className="lb-dn">{filtered.length + " " + (lang === "fr" ? "article" : "highlight") + (filtered.length !== 1 ? "s" : "")}{selCat !== "all" && (" " + (lang === "fr" ? "en " : "in ") + t(selCat, lang))}</p>
+          {updatedText && <p className="lb-upd">{lang === "fr" ? ("Mis à jour " + updatedText) : ("Updated " + updatedText)}</p>}
 
           {trending.length > 0 && selCat === "all" && (
             <div className="lb-tr">
@@ -270,7 +282,7 @@ export default function LeBref({ initialDates, initialDateCounts, initialArticle
           )}
 
           {filtered.length === 0 ? (
-            <div className="lb-se"><p>No highlights found{query ? " matching your search" : ""}.</p></div>
+            <div className="lb-se"><p>{lang === "fr" ? ("Aucun article trouvé" + (query ? " pour cette recherche" : "")) : ("No highlights found" + (query ? " matching your search" : ""))}.</p></div>
           ) : filtered.map(function(a, i) {
             var ex = expId === a.id;
             var src = Array.isArray(a.sources) ? a.sources : [];
@@ -285,20 +297,20 @@ export default function LeBref({ initialDates, initialDateCounts, initialArticle
                     {a.subcategory && <span className="lb-su">{fmtSub(a.subcategory)}</span>}
                     {a.time_published && <span className="lb-tm">{a.time_published}</span>}
                   </div>
-                  <div className="lb-tl">{a.tldr}</div>
+                  <div className="lb-tl">{localized(a, "tldr", lang)}</div>
                 </div>
                 <div className="lb-ch">{"\u2304"}</div>
               </div>
               {ex && <div className="lb-t2">
-                <div className="lb-hl">{a.headline}</div>
-                <div className="lb-sm">{a.summary}</div>
-                {a.why_it_matters && <div className="lb-wm"><div className="lb-wl">{"\u2726"} Why It Matters</div><div className="lb-wt">{a.why_it_matters}</div></div>}
+                <div className="lb-hl">{localized(a, "headline", lang)}</div>
+                <div className="lb-sm">{localized(a, "summary", lang)}</div>
+                {a.why_it_matters && <div className="lb-wm"><div className="lb-wl">{"\u2726"} {t("whyItMatters", lang)}</div><div className="lb-wt">{localized(a, "why_it_matters", lang)}</div></div>}
                 <div className="lb-ft">
-                  <div className="lb-sr">{src.length > 0 && <>Sources: <span>{src.join(" \u00B7 ")}</span></>}</div>
+                  <div className="lb-sr">{src.length > 0 && <>{t("sources", lang)}: <span>{src.join(" \u00B7 ")}</span></>}</div>
                   <div className="lb-ax">
-                    <button className="lb-sh" onClick={function(e) { doShare(a, e); }}>Share</button>
-                    <a href={aLink(a)} className="lb-sh">Permalink</a>
-                    <a href={claudeUrl(a)} target="_blank" rel="noopener noreferrer" className="lb-dp">{"\u2726"} Go deeper {"\u2192"}</a>
+                    <button className="lb-sh" onClick={function(e) { doShare(a, e); }}>{t("share", lang)}</button>
+                    <a href={aLink(a)} className="lb-sh">{lang === "fr" ? "Permalien" : "Permalink"}</a>
+                    <a href={claudeUrl(a)} target="_blank" rel="noopener noreferrer" className="lb-dp">{"\u2726"} {t("goDeeper", lang)} {"\u2192"}</a>
                   </div>
                 </div>
               </div>}
@@ -311,12 +323,12 @@ export default function LeBref({ initialDates, initialDateCounts, initialArticle
 
       <div className="lb-nl">
         <div className="lb-nb">
-          <div className="lb-nt">Get Le Bref in your inbox</div>
-          <div className="lb-nd">The day's most important stories, delivered every morning. Free forever.</div>
-          {subbed ? <div className="lb-no">{"\u2713"} You're in! See you tomorrow morning.</div>
+          <div className="lb-nt">{t("nlTitle", lang)}</div>
+          <div className="lb-nd">{t("nlSubtitle", lang)}</div>
+          {subbed ? <div className="lb-no">{"\u2713"} {t("nlThanks", lang)}</div>
           : <div className="lb-nf">
-              <input className="lb-ni" type="email" placeholder="your@email.com" value={email} onChange={function(e) { setEmail(e.target.value); }} onKeyDown={function(e) { if (e.key === "Enter") onSub(e); }} />
-              <button className="lb-nx" onClick={onSub}>Subscribe</button>
+              <input className="lb-ni" type="email" placeholder={t("nlPlaceholder", lang)} value={email} onChange={function(e) { setEmail(e.target.value); }} onKeyDown={function(e) { if (e.key === "Enter") onSub(e); }} />
+              <button className="lb-nx" onClick={onSub}>{t("nlButton", lang)}</button>
             </div>}
         </div>
       </div>

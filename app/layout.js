@@ -1,3 +1,5 @@
+import Providers from "./Providers";
+
 export const metadata = {
   title: "Le Bref — Today's world, briefly",
   description:
@@ -40,10 +42,9 @@ export const viewport = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <head>
-        <link rel="alternate" type="application/rss+xml" title="Le Bref" href="/api/rss" />
-      </head>
-      <body style={{ margin: 0, padding: 0 }}>{children}</body>
+      <body style={{ margin: 0, padding: 0 }}>
+        <Providers>{children}</Providers>
+      </body>
     </html>
   );
 }

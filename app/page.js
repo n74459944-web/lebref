@@ -10,10 +10,10 @@ export default async function Home() {
   var err = null;
 
   try {
-    // Fetch all recent articles in one call
+    // Fetch all recent articles in one call (includes French columns)
     var rows = await sbFetch(
       "articles",
-      "select=id,category,subcategory,headline,tldr,summary,why_it_matters,sources,source_urls,time_published,published_date,created_at&order=published_date.desc,time_published.desc&limit=500"
+      "select=id,category,subcategory,headline,tldr,summary,why_it_matters,headline_fr,tldr_fr,summary_fr,why_it_matters_fr,sources,source_urls,time_published,published_date,created_at&order=published_date.desc,time_published.desc&limit=500"
     );
 
     // Group by date
